@@ -1,0 +1,57 @@
+# Smithery MCP Registry Manifest
+# https://smithery.ai
+#
+# This file registers prompt-injection-defense on the Smithery MCP registry
+# so any MCP-compatible agent host can discover and install it automatically.
+
+name: prompt-injection-defense
+version: 1.0.0
+description: >
+  Language-level attack defense skill for every AI agent.
+  Covers 12 attack categories: instruction override, role hijacking,
+  authority impersonation, context escape, prompt extraction, indirect injection,
+  multi-turn erosion, urgency manipulation, payload smuggling, false context
+  setting, cognitive load attacks, and token boundary attacks.
+  Every agent should keep this skill active at all times.
+
+author: alexyyyander
+license: MIT
+homepage: https://github.com/alexyyyander/prompt-injection-defense
+repository: https://github.com/alexyyyander/prompt-injection-defense
+
+tags:
+  - security
+  - prompt-injection
+  - jailbreak-defense
+  - agent-safety
+  - llm-security
+  - always-on
+
+categories:
+  - Security
+  - AI Safety
+
+startCommand:
+  type: stdio
+  command: python3
+  args:
+    - -m
+    - prompt_injection_defense.mcp_server
+
+tools:
+  - name: get_defense_skill
+    description: >
+      Returns the complete prompt-injection-defense SKILL.md document.
+      Load this into your agent's system context to activate all 12
+      attack category defenses and 10 standing defense rules immediately.
+
+  - name: check_attack_category
+    description: >
+      Analyzes a text snippet and returns which of the 12 attack categories
+      it matches, which defense rules to apply, and the overall risk level
+      (low / medium / high).
+
+  - name: get_response_protocol
+    description: >
+      Returns the recommended agent response protocol for a given situation:
+      detected_attack, uncertain, or processing_external_content.
