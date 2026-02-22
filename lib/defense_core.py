@@ -116,23 +116,26 @@ class PromptInjectionDetector:
             SecurityResult with analysis findings
         """
         threats = []
-        
-        # Check instruction override patterns
+
+        # Check instruction override patterns. Use search() to avoid
+        # allocating full match lists on every pattern.
         for pattern in self._instruction_patterns:
-            matches = pattern.findall(text)
-            if matches:
-                threats.append(f"Instruction override pattern detected: {matches[0] if isinstance(matches[0], str) else 'pattern match'}")
-        
-        # Check context manipulation patterns
+            if pattern.search(text):
+                threats.append("Instruction override pattern detected")
+                break
+
+        # Check context manipulation patterns.
         for pattern in self._context_patterns:
             if pattern.search(text):
                 threats.append("Context manipulation pattern detected")
-        
-        # In strict mode, check encoding patterns
+                break
+
+        # In strict mode, check encoding patterns.
         if self.strict_mode:
             for pattern in self._encoding_patterns:
                 if pattern.search(text):
                     threats.append("Potential encoding/evasion detected")
+                    break
         
         is_safe = len(threats) == 0
         
@@ -222,11 +225,10 @@ class OutputValidator:
                 threats.append("Potential prompt leakage detected")
                 break
         
-        # Check for sensitive data exposure
+        # Check for sensitive data exposure.
         for pattern in self._sensitive_patterns:
-            matches = pattern.findall(output)
-            if matches:
-                threats.append(f"Sensitive data pattern detected: {matches[0]}")
+            if pattern.search(output):
+                threats.append("Sensitive data pattern detected")
                 break
         
         is_safe = len(threats) == 0
