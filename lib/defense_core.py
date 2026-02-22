@@ -104,6 +104,20 @@ class PromptInjectionDetector:
         self._encoding_patterns = [
             re.compile(p, re.IGNORECASE) for p in self.ENCODING_PATTERNS
         ]
+        # Fast-path compiled unions for analyze(). Keeps behavior equivalent
+        # while reducing per-call regex iterations in hot paths.
+        self._instruction_any_pattern = re.compile(
+            "|".join(f"(?:{p})" for p in self.INSTRUCTION_OVERRIDE_PATTERNS),
+            re.IGNORECASE,
+        )
+        self._context_any_pattern = re.compile(
+            "|".join(f"(?:{p})" for p in self.CONTEXT_MANIPULATION_PATTERNS),
+            re.IGNORECASE,
+        )
+        self._encoding_any_pattern = re.compile(
+            "|".join(f"(?:{p})" for p in self.ENCODING_PATTERNS),
+            re.IGNORECASE,
+        )
     
     def analyze(self, text: str) -> SecurityResult:
         """
@@ -117,25 +131,15 @@ class PromptInjectionDetector:
         """
         threats = []
 
-        # Check instruction override patterns. Use search() to avoid
-        # allocating full match lists on every pattern.
-        for pattern in self._instruction_patterns:
-            if pattern.search(text):
-                threats.append("Instruction override pattern detected")
-                break
+        # Single-search checks avoid repeated pattern iteration per request.
+        if self._instruction_any_pattern.search(text):
+            threats.append("Instruction override pattern detected")
 
-        # Check context manipulation patterns.
-        for pattern in self._context_patterns:
-            if pattern.search(text):
-                threats.append("Context manipulation pattern detected")
-                break
+        if self._context_any_pattern.search(text):
+            threats.append("Context manipulation pattern detected")
 
-        # In strict mode, check encoding patterns.
-        if self.strict_mode:
-            for pattern in self._encoding_patterns:
-                if pattern.search(text):
-                    threats.append("Potential encoding/evasion detected")
-                    break
+        if self.strict_mode and self._encoding_any_pattern.search(text):
+            threats.append("Potential encoding/evasion detected")
         
         is_safe = len(threats) == 0
         
