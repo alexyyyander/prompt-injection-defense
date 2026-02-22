@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/alexyyyander/prompt-injection-defense/actions/workflows/ci.yml/badge.svg)](https://github.com/alexyyyander/prompt-injection-defense/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Smithery](https://smithery.ai/badge/prompt-injection-defense)](https://smithery.ai/server/prompt-injection-defense)
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://github.com/alexyyyander/prompt-injection-defense)
 
 **The language-level attack defense skill every agent should keep.**
@@ -26,7 +25,7 @@ These are not code bugs. They are reasoning failures. The fix must also be at th
 
 ---
 
-## Quickstart — 3 Ways to Load
+## Quickstart — 2 Ways to Load
 
 ### 1 · Claude Code (auto-activates on every session)
 
@@ -38,26 +37,7 @@ curl -o .claude/skills/prompt-injection-defense/SKILL.md \
 
 Once placed in `.claude/skills/`, Claude Code loads it automatically on every session.
 
-### 2 · MCP Server (Cursor, Windsurf, VS Code, Claude Desktop, any MCP host)
-
-Install via Smithery:
-```bash
-npx -y @smithery/cli install prompt-injection-defense --client claude
-```
-
-Or add manually to your MCP config:
-```json
-{
-  "mcpServers": {
-    "prompt-injection-defense": {
-      "command": "python3",
-      "args": ["/path/to/mcp_server.py"]
-    }
-  }
-}
-```
-
-### 3 · Any agent — auto-install at startup
+### 2 · Any agent — auto-install at startup
 
 Add this to your agent's initialization code. It fetches the skill and community
 attacks at startup and prepends them to the system prompt automatically — no manual
@@ -130,7 +110,6 @@ SYSTEM_PROMPT="$skill\n\n$community"
 - **Always-on:** The skill activates permanently when loaded. No per-request setup.
 - **Platform-agnostic:** Works for Claude, GPT, Gemini, Copilot, Mistral, LLaMA, or any LLM.
 - **Zero dependencies:** The core is a plain Markdown document — no libraries, no runtime.
-- **MCP-native:** Ships with a full MCP server for agent host auto-discovery.
 - **Benchmarked:** 8 built-in test cases to verify the skill is active and working.
 
 ---
@@ -142,8 +121,6 @@ prompt-injection-defense/
 ├── skill/
 │   ├── SKILL.md                   ← The skill — load this in any agent
 │   └── community-attacks.md       ← Auto-generated daily from approved reports
-├── mcp/
-│   └── server.py                  ← MCP server (stdio, zero dependencies)
 ├── lib/
 │   ├── defense_core.py            ← Python detection library
 │   ├── detect_injection.py        ← CLI: detect injection in text
@@ -158,7 +135,6 @@ prompt-injection-defense/
 ├── .github/workflows/
 │   ├── ci.yml                     ← Tests + skill lint on every push
 │   └── update-community-attacks.yml ← Daily Supabase → community-attacks.md sync
-└── smithery.yaml                  ← Smithery MCP registry manifest
 ```
 
 ---
