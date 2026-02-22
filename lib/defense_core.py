@@ -10,6 +10,7 @@ Based on OWASP guidelines and current research (2026).
 import re
 from typing import Tuple, List, Optional
 from dataclasses import dataclass
+from collections import OrderedDict
 
 
 @dataclass
@@ -91,6 +92,10 @@ class PromptInjectionDetector:
             strict_mode: If True, be more aggressive in detecting potential threats
         """
         self.strict_mode = strict_mode
+        # Cache repeated analyses (common in batched tool pipelines/tests).
+        # Key: input text; Value: (is_safe, threats tuple, confidence)
+        self._analysis_cache = OrderedDict()
+        self._analysis_cache_size = 256
         self._compile_patterns()
     
     def _compile_patterns(self):
@@ -129,6 +134,16 @@ class PromptInjectionDetector:
         Returns:
             SecurityResult with analysis findings
         """
+        cached = self._analysis_cache.get(text)
+        if cached is not None:
+            self._analysis_cache.move_to_end(text)
+            is_safe, threats_tuple, confidence = cached
+            return SecurityResult(
+                is_safe=is_safe,
+                threats=list(threats_tuple),
+                confidence=confidence,
+            )
+
         threats = []
 
         # Single-search checks avoid repeated pattern iteration per request.
@@ -142,11 +157,17 @@ class PromptInjectionDetector:
             threats.append("Potential encoding/evasion detected")
         
         is_safe = len(threats) == 0
-        
+        confidence = 0.95 if is_safe else 0.85
+
+        self._analysis_cache[text] = (is_safe, tuple(threats), confidence)
+        self._analysis_cache.move_to_end(text)
+        if len(self._analysis_cache) > self._analysis_cache_size:
+            self._analysis_cache.popitem(last=False)
+
         return SecurityResult(
             is_safe=is_safe,
             threats=threats,
-            confidence=0.95 if is_safe else 0.85
+            confidence=confidence
         )
     
     def sanitize(self, text: str, replacement: str = "[FILTERED]") -> str:
