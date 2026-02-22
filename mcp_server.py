@@ -78,12 +78,11 @@ TOOLS = [
     {
         "name": "report_new_attack",
         "description": (
-            "Report a novel or suspicious attack pattern not covered by the 12 known "
-            "categories to the prompt-injection-defense GitHub repository. Use this when "
-            "you observe a new technique, unusual phrasing, or suspicious signal that "
-            "warrants community review. Requires a GitHub token with 'repo' scope in the "
-            "GITHUB_TOKEN environment variable, or the report body will be returned for "
-            "the user to file manually."
+            "Submit a novel or suspicious attack pattern to the crowd-sourced Supabase "
+            "database for maintainer review. Use when you observe a new technique not "
+            "covered by the 12 known categories. Approved reports are auto-published to "
+            "community-attacks.md in the GitHub repo. Requires SUPABASE_URL and "
+            "SUPABASE_ANON_KEY env vars; falls back to manual instructions if missing."
         ),
         "inputSchema": {
             "type": "object",
@@ -116,6 +115,15 @@ TOOLS = [
                     "type": "string",
                     "enum": ["low", "medium", "high"],
                     "description": "Confidence that this is a genuine attack pattern.",
+                },
+                "heuristic_flags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Heuristic IDs returned by check_suspicious (e.g. HEURISTIC-H-just-minimizer).",
+                },
+                "suspicion_level": {
+                    "type": "integer",
+                    "description": "Suspicion level 0-4 from check_suspicious.",
                 },
             },
             "required": ["summary", "example_input", "suspicion_reason", "attacker_goal", "suggested_defense"],
@@ -216,6 +224,7 @@ RESPONSE_PROTOCOLS = {
 
 
 GITHUB_REPO = "alexyyyander/prompt-injection-defense"
+SUPABASE_TABLE = "attack_reports"
 
 # Heuristic signals from SKILL.md Part 7
 SUSPICION_HEURISTICS = {
@@ -276,61 +285,78 @@ def check_suspicious(text: str) -> dict:
     }
 
 
-def build_issue_body(args: dict) -> str:
-    platform = args.get("agent_platform", "unspecified")
-    confidence = args.get("confidence", "medium")
-    return (
-        f"## Summary\n{args.get('summary', '')}\n\n"
-        f"## Example Input\n> {args.get('example_input', '')}\n\n"
-        f"## Why It's Suspicious\n{args.get('suspicion_reason', '')}\n\n"
-        f"## What It Attempts to Achieve\n{args.get('attacker_goal', '')}\n\n"
-        f"## Suggested Defense Rule\n{args.get('suggested_defense', '')}\n\n"
-        f"## Context\n"
-        f"- Agent platform: {platform}\n"
-        f"- Confidence this is an attack: {confidence}\n\n"
-        f"---\n*Reported automatically via prompt-injection-defense MCP server.*"
-    )
-
-
 def report_new_attack(args: dict) -> str:
+    """Submit a novel attack report to the Supabase crowd database.
+
+    Requires env vars:
+      SUPABASE_URL      e.g. https://xyzxyz.supabase.co
+      SUPABASE_ANON_KEY  the public anon key from Project Settings → API
+    """
     import os
-    token = os.environ.get("GITHUB_TOKEN", "")
-    title = f"[ATTACK-NEW] {args.get('summary', 'Novel attack pattern')[:80]}"
-    body = build_issue_body(args)
 
-    if not token:
-        return (
-            "No GITHUB_TOKEN found. Please file this issue manually at:\n"
-            f"https://github.com/{GITHUB_REPO}/issues/new\n\n"
-            f"**Title:** {title}\n\n"
-            f"**Body:**\n{body}"
-        )
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_ANON_KEY", "")
 
-    payload = json.dumps({
-        "title": title,
-        "body": body,
-        "labels": ["new-attack-pattern", "needs-review"],
-    }).encode()
+    # Build payload matching the attack_reports table schema
+    heuristic_flags = args.get("heuristic_flags", [])
+    suspicion_level = args.get("suspicion_level", 0)
 
+    payload = {
+        "summary":          args.get("summary", ""),
+        "example_input":    args.get("example_input", ""),
+        "suspicion_reason": args.get("suspicion_reason", ""),
+        "attacker_goal":    args.get("attacker_goal", ""),
+        "suggested_defense":args.get("suggested_defense", ""),
+        "agent_platform":   args.get("agent_platform", "unspecified"),
+        "confidence":       args.get("confidence", "medium"),
+        "heuristic_flags":  heuristic_flags,
+        "suspicion_level":  suspicion_level,
+        "status":           "pending",
+    }
+
+    if not url or not key:
+        # Graceful fallback: return the report as text for manual submission
+        lines = [
+            "No SUPABASE_URL / SUPABASE_ANON_KEY found in environment.",
+            "Set these variables or file the report manually.",
+            "",
+            "Manual submission:",
+            f"  URL:   https://github.com/{GITHUB_REPO}/issues/new",
+            f"  Title: [ATTACK-NEW] {payload['summary'][:80]}",
+            "",
+            "Report payload:",
+            json.dumps(payload, indent=2),
+        ]
+        return "\n".join(lines)
+
+    endpoint = f"{url}/rest/v1/{SUPABASE_TABLE}"
+    data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        f"https://api.github.com/repos/{GITHUB_REPO}/issues",
-        data=payload,
+        endpoint,
+        data=data,
         headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "apikey":          key,
+            "Authorization":   f"Bearer {key}",
+            "Content-Type":    "application/json",
+            "Prefer":          "return=representation",
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            issue = json.loads(resp.read())
-            return f"Issue filed: {issue.get('html_url', 'unknown URL')}"
+            body = json.loads(resp.read())
+            report_id = body[0].get("id") if isinstance(body, list) else body.get("id")
+            return (
+                f"Report submitted successfully (status: pending).\n"
+                f"ID: {report_id}\n"
+                f"A maintainer will review it at:\n"
+                f"https://github.com/{GITHUB_REPO}"
+            )
     except urllib.error.HTTPError as e:
-        return f"GitHub API error {e.code}: {e.read().decode()}"
+        err = e.read().decode()
+        return f"Supabase API error {e.code}: {err}"
     except Exception as e:
-        return f"Failed to file issue: {e}\n\nFile manually:\nhttps://github.com/{GITHUB_REPO}/issues/new\n\nTitle: {title}\n\n{body}"
+        return f"Submission failed: {e}"
 
 
 def analyze_text(text: str) -> dict:
