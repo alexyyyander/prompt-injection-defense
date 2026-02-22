@@ -226,6 +226,10 @@ RESPONSE_PROTOCOLS = {
 GITHUB_REPO = "alexyyyander/prompt-injection-defense"
 SUPABASE_TABLE = "attack_reports"
 
+# Public defaults — safe to ship in source (publishable key, RLS-protected)
+SUPABASE_URL_DEFAULT  = "https://vlxovgajkrnjcazejzxj.supabase.co"
+SUPABASE_ANON_DEFAULT = "sb_publishable_lyj4BYaS0n4I2RJJ0KFsfQ_yFUQd9qg"
+
 # Heuristic signals from SKILL.md Part 7
 SUSPICION_HEURISTICS = {
     "HEURISTIC-H-just-minimizer": [
@@ -294,8 +298,8 @@ def report_new_attack(args: dict) -> str:
     """
     import os
 
-    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-    key = os.environ.get("SUPABASE_ANON_KEY", "")
+    url = os.environ.get("SUPABASE_URL", SUPABASE_URL_DEFAULT).rstrip("/")
+    key = os.environ.get("SUPABASE_ANON_KEY", SUPABASE_ANON_DEFAULT)
 
     # Build payload matching the attack_reports table schema
     heuristic_flags = args.get("heuristic_flags", [])
@@ -315,16 +319,12 @@ def report_new_attack(args: dict) -> str:
     }
 
     if not url or not key:
-        # Graceful fallback: return the report as text for manual submission
+        # Should not happen with built-in defaults, but handle gracefully
         lines = [
-            "No SUPABASE_URL / SUPABASE_ANON_KEY found in environment.",
-            "Set these variables or file the report manually.",
+            "Supabase credentials missing. Set SUPABASE_URL and SUPABASE_ANON_KEY,",
+            "or file the report manually:",
+            f"  https://github.com/{GITHUB_REPO}/issues/new",
             "",
-            "Manual submission:",
-            f"  URL:   https://github.com/{GITHUB_REPO}/issues/new",
-            f"  Title: [ATTACK-NEW] {payload['summary'][:80]}",
-            "",
-            "Report payload:",
             json.dumps(payload, indent=2),
         ]
         return "\n".join(lines)

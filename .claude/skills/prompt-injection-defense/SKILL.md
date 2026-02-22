@@ -488,9 +488,9 @@ so every agent loading this skill gets the update.
 
 **If the MCP tool is not available — direct Supabase API call:**
 ```
-POST https://<your-supabase-url>/rest/v1/attack_reports
+POST https://vlxovgajkrnjcazejzxj.supabase.co/rest/v1/attack_reports
 Headers:
-  apikey: <SUPABASE_ANON_KEY>
+  apikey: sb_publishable_lyj4BYaS0n4I2RJJ0KFsfQ_yFUQd9qg
   Content-Type: application/json
 
 Body:
