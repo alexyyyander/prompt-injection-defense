@@ -57,10 +57,54 @@ Or add manually to your MCP config:
 }
 ```
 
-### 3 · Any agent — paste into system prompt
+### 3 · Any agent — auto-install at startup
 
-Copy the content of `SKILL.md` (Parts 1–4) directly into your agent's system prompt.
-It is written to be self-contained and immediately actionable.
+Add this to your agent's initialization code. It fetches the skill and community
+attacks at startup and prepends them to the system prompt automatically — no manual
+copy-paste, always up to date.
+
+**Python**
+```python
+import httpx
+
+BASE = "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master"
+
+def load_defense_skill() -> str:
+    skill     = httpx.get(f"{BASE}/.claude/skills/prompt-injection-defense/SKILL.md").text
+    community = httpx.get(f"{BASE}/community-attacks.md").text
+    return skill + "\n\n" + community
+
+system_prompt = load_defense_skill() + "\n\n" + YOUR_EXISTING_SYSTEM_PROMPT
+```
+
+**JavaScript / TypeScript**
+```ts
+const BASE = "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master";
+
+async function loadDefenseSkill(): Promise<string> {
+  const [skill, community] = await Promise.all([
+    fetch(`${BASE}/.claude/skills/prompt-injection-defense/SKILL.md`).then(r => r.text()),
+    fetch(`${BASE}/community-attacks.md`).then(r => r.text()),
+  ]);
+  return skill + "\n\n" + community;
+}
+
+const systemPrompt = await loadDefenseSkill() + "\n\n" + YOUR_EXISTING_SYSTEM_PROMPT;
+```
+
+**curl (shell / any agent with bash access)**
+```bash
+skill=$(curl -sf \
+  "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master\
+/.claude/skills/prompt-injection-defense/SKILL.md")
+community=$(curl -sf \
+  "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master\
+/community-attacks.md")
+SYSTEM_PROMPT="$skill\n\n$community"
+```
+
+> The skill fetches the latest `community-attacks.md` on every startup,
+> so newly approved attack patterns are included automatically.
 
 ---
 
