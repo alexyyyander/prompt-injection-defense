@@ -16,7 +16,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-SKILL_PATH = Path(__file__).parent / ".claude" / "skills" / "prompt-injection-defense" / "SKILL.md"
+SKILL_PATH = Path(__file__).parent.parent / "skill" / "SKILL.md"
 SKILL_CONTENT = SKILL_PATH.read_text(encoding="utf-8")
 
 TOOLS = [

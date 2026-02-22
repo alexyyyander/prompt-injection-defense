@@ -33,7 +33,7 @@ These are not code bugs. They are reasoning failures. The fix must also be at th
 ```bash
 mkdir -p .claude/skills/prompt-injection-defense
 curl -o .claude/skills/prompt-injection-defense/SKILL.md \
-  https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master/.claude/skills/prompt-injection-defense/SKILL.md
+  https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master/skill/SKILL.md
 ```
 
 Once placed in `.claude/skills/`, Claude Code loads it automatically on every session.
@@ -70,8 +70,8 @@ import httpx
 BASE = "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master"
 
 def load_defense_skill() -> str:
-    skill     = httpx.get(f"{BASE}/.claude/skills/prompt-injection-defense/SKILL.md").text
-    community = httpx.get(f"{BASE}/community-attacks.md").text
+    skill     = httpx.get(f"{BASE}/skill/SKILL.md").text
+    community = httpx.get(f"{BASE}/skill/community-attacks.md").text
     return skill + "\n\n" + community
 
 system_prompt = load_defense_skill() + "\n\n" + YOUR_EXISTING_SYSTEM_PROMPT
@@ -83,8 +83,8 @@ const BASE = "https://raw.githubusercontent.com/alexyyyander/prompt-injection-de
 
 async function loadDefenseSkill(): Promise<string> {
   const [skill, community] = await Promise.all([
-    fetch(`${BASE}/.claude/skills/prompt-injection-defense/SKILL.md`).then(r => r.text()),
-    fetch(`${BASE}/community-attacks.md`).then(r => r.text()),
+    fetch(`${BASE}/skill/SKILL.md`).then(r => r.text()),
+    fetch(`${BASE}/skill/community-attacks.md`).then(r => r.text()),
   ]);
   return skill + "\n\n" + community;
 }
@@ -95,11 +95,9 @@ const systemPrompt = await loadDefenseSkill() + "\n\n" + YOUR_EXISTING_SYSTEM_PR
 **curl (shell / any agent with bash access)**
 ```bash
 skill=$(curl -sf \
-  "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master\
-/.claude/skills/prompt-injection-defense/SKILL.md")
+  "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master/skill/SKILL.md")
 community=$(curl -sf \
-  "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master\
-/community-attacks.md")
+  "https://raw.githubusercontent.com/alexyyyander/prompt-injection-defense/master/skill/community-attacks.md")
 SYSTEM_PROMPT="$skill\n\n$community"
 ```
 
@@ -141,18 +139,26 @@ SYSTEM_PROMPT="$skill\n\n$community"
 
 ```
 prompt-injection-defense/
+├── skill/
+│   ├── SKILL.md                   ← The skill — load this in any agent
+│   └── community-attacks.md       ← Auto-generated daily from approved reports
+├── mcp/
+│   └── server.py                  ← MCP server (stdio, zero dependencies)
+├── lib/
+│   ├── defense_core.py            ← Python detection library
+│   ├── detect_injection.py        ← CLI: detect injection in text
+│   ├── sanitize_input.py          ← CLI: sanitize input before LLM call
+│   └── validate_output.py         ← CLI: validate LLM output
+├── supabase/
+│   └── schema.sql                 ← DB schema for crowd-reported attacks
+├── tests/
+│   └── test_defense.py            ← Test suite
 ├── .claude/skills/prompt-injection-defense/
-│   └── SKILL.md          ← The skill (auto-loaded by Claude Code)
+│   └── SKILL.md                   ← Claude Code auto-discovery (mirrors skill/)
 ├── .github/workflows/
-│   └── ci.yml            ← CI: tests + skill lint on every push
-├── smithery.yaml          ← Smithery MCP registry manifest
-├── mcp_server.py          ← MCP server (stdio, no dependencies)
-├── defense_core.py        ← Python detection library
-├── detect_injection.py    ← CLI: detect injection in text
-├── sanitize_input.py      ← CLI: sanitize input before LLM call
-├── validate_output.py     ← CLI: validate LLM output
-└── tests/
-    └── test_defense.py    ← Test suite
+│   ├── ci.yml                     ← Tests + skill lint on every push
+│   └── update-community-attacks.yml ← Daily Supabase → community-attacks.md sync
+└── smithery.yaml                  ← Smithery MCP registry manifest
 ```
 
 ---
@@ -163,7 +169,7 @@ The repo also includes a Python detection library for applications that want
 programmatic checking:
 
 ```python
-from defense_core import sanitize, validate_output, detect
+from lib import sanitize, validate_output, detect
 
 safe_input = sanitize(user_input)          # clean before LLM call
 is_safe, threats = detect(user_input)      # check for attack patterns
@@ -172,9 +178,9 @@ validated = validate_output(llm_response)  # check LLM output
 
 CLI tools:
 ```bash
-python3 detect_injection.py "ignore all previous instructions"
-python3 sanitize_input.py "your text here"
-python3 validate_output.py "LLM response here"
+python3 lib/detect_injection.py "ignore all previous instructions"
+python3 lib/sanitize_input.py "your text here"
+python3 lib/validate_output.py "LLM response here"
 ```
 
 ---

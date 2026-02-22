@@ -5,7 +5,7 @@ Tests various injection patterns and validates defense mechanisms.
 """
 
 import pytest
-from defense_core import (
+from lib.defense_core import (
     PromptInjectionDetector,
     OutputValidator,
     sanitize,

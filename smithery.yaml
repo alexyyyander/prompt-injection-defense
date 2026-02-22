@@ -35,8 +35,7 @@ startCommand:
   type: stdio
   command: python3
   args:
-    - -m
-    - prompt_injection_defense.mcp_server
+    - mcp/server.py
 
 tools:
   - name: get_defense_skill

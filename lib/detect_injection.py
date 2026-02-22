@@ -9,7 +9,7 @@ Usage:
 
 import sys
 import json
-from defense_core import detect, PromptInjectionDetector
+from lib.defense_core import detect, PromptInjectionDetector
 
 
 def main():

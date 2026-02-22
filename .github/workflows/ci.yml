@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install pytest
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  skill-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify SKILL.md exists and has required frontmatter
+        run: |
+          FILE=".claude/skills/prompt-injection-defense/SKILL.md"
+          if [ ! -f "$FILE" ]; then
+            echo "ERROR: SKILL.md missing at $FILE"
+            exit 1
+          fi
+          if ! grep -q "^name: prompt-injection-defense" "$FILE"; then
+            echo "ERROR: SKILL.md missing 'name' frontmatter field"
+            exit 1
+          fi
+          if ! grep -q "^version:" "$FILE"; then
+            echo "ERROR: SKILL.md missing 'version' frontmatter field"
+            exit 1
+          fi
+          echo "SKILL.md OK"
+
+      - name: Verify benchmark sections exist
+        run: |
+          FILE=".claude/skills/prompt-injection-defense/SKILL.md"
+          for section in "THREAT TAXONOMY" "STANDING DEFENSE RULES" "DETECTION QUICK-REFERENCE" "RESPONSE PROTOCOLS" "BENCHMARK TEST CASES"; do
+            if ! grep -q "$section" "$FILE"; then
+              echo "ERROR: Missing section: $section"
+              exit 1
+            fi
+          done
+          echo "All sections present"

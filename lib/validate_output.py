@@ -9,7 +9,7 @@ Usage:
 
 import sys
 import json
-from defense_core import validate_output, OutputValidator, SecurityError
+from lib.defense_core import validate_output, OutputValidator, SecurityError
 
 
 def main():

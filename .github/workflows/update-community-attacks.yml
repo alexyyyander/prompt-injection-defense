@@ -1,0 +1,108 @@
+name: Sync Approved Attacks
+
+# Runs daily + on manual trigger.
+# Fetches approved rows from Supabase and regenerates skill/community-attacks.md.
+# Required GitHub Secrets:
+#   SUPABASE_URL         e.g. https://xyzxyz.supabase.co
+#   SUPABASE_SERVICE_KEY  service role key (full read access, bypasses RLS)
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC daily
+  workflow_dispatch:        # manual trigger from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch approved attacks from Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -sf \
+            "${SUPABASE_URL}/rest/v1/attack_reports?status=eq.approved&order=reviewed_at.asc" \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            -o approved_attacks.json
+          echo "Fetched $(jq length approved_attacks.json) approved attacks"
+
+      - name: Generate skill/community-attacks.md
+        run: |
+          python3 - <<'EOF'
+          import json, datetime
+
+          with open("approved_attacks.json") as f:
+              attacks = json.load(f)
+
+          lines = [
+              "# Community-Reported Attack Patterns",
+              "",
+              "> This file is auto-generated daily from the crowd-sourced Supabase database.",
+              "> To report a novel attack, use the `report_new_attack` MCP tool or file an issue at:",
+              "> https://github.com/alexyyyander/prompt-injection-defense/issues",
+              "",
+              f"Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ",
+              f"Total approved patterns: {len(attacks)}",
+              "",
+              "---",
+              "",
+          ]
+
+          if not attacks:
+              lines += [
+                  "_No community-reported attacks have been approved yet._",
+                  "",
+                  "Be the first to contribute — load the skill, watch for novel patterns,",
+                  "and use `report_new_attack` to submit.",
+              ]
+          else:
+              for i, a in enumerate(attacks, start=13):
+                  cat = a.get("attack_category") or f"ATTACK-{i:02d}"
+                  lines += [
+                      f"## {cat} · {a['summary']}",
+                      "",
+                      f"**Reported by:** {a.get('agent_platform', 'unspecified')} agent  ",
+                      f"**Confidence:** {a.get('confidence', 'medium')}  ",
+                      f"**Suspicion level:** {a.get('suspicion_level', 0)}/4  ",
+                      f"**Approved:** {(a.get('reviewed_at') or '')[:10]}",
+                      "",
+                      "**Example input (anonymized):**",
+                      f"> {a['example_input']}",
+                      "",
+                      f"**Why suspicious:** {a['suspicion_reason']}",
+                      "",
+                      f"**Attacker goal:** {a['attacker_goal']}",
+                      "",
+                      f"**Suggested defense:** {a['suggested_defense']}",
+                      "",
+                  ]
+                  if a.get("reviewer_notes"):
+                      lines += [f"**Maintainer notes:** {a['reviewer_notes']}", ""]
+                  if a.get("heuristic_flags"):
+                      lines += [f"**Heuristic flags:** {', '.join(a['heuristic_flags'])}", ""]
+                  lines.append("---")
+                  lines.append("")
+
+          with open("skill/community-attacks.md", "w") as f:
+              f.write("\n".join(lines))
+
+          print(f"Generated skill/community-attacks.md with {len(attacks)} entries")
+          EOF
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add skill/community-attacks.md
+          if git diff --staged --quiet; then
+            echo "No changes to skill/community-attacks.md"
+          else
+            git commit -m "chore: sync approved community attacks [skip ci]"
+            git push
+          fi
