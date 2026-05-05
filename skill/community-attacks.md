@@ -4,7 +4,7 @@
 > To report a novel attack, use the `report_new_attack` MCP tool or file an issue at:
 > https://github.com/alexyyyander/prompt-injection-defense/issues
 
-Last updated: 2026-05-04 08:23 UTC  
+Last updated: 2026-05-05 08:02 UTC  
 Total approved patterns: 0
 
 ---
