@@ -18,7 +18,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Fetch approved attacks from Supabase
         env:
@@ -35,16 +35,34 @@ jobs:
       - name: Generate skill/community-attacks.md
         run: |
           python3 - <<'EOF'
-          import json, datetime
+          import datetime
+          import html
+          import json
 
-          with open("approved_attacks.json") as f:
+          MAX_FIELD_LENGTH = 2000
+
+          def safe_field(value):
+              """Keep community data inert when rendered into Markdown."""
+              text = "" if value is None else str(value)
+              text = text.replace("\x00", " ").replace("\r", " ").replace("\n", " ")
+              text = html.escape(text[:MAX_FIELD_LENGTH], quote=False)
+              return (text.replace("`", "\\`")
+                          .replace("[", "\\[")
+                          .replace("]", "\\]")
+                          .replace("(", "\\(")
+                          .replace(")", "\\)"))
+
+          with open("approved_attacks.json", encoding="utf-8") as f:
               attacks = json.load(f)
+
+          if not isinstance(attacks, list):
+              raise SystemExit("approved_attacks.json must contain a JSON array")
 
           lines = [
               "# Community-Reported Attack Patterns",
               "",
               "> This file is auto-generated daily from the crowd-sourced Supabase database.",
-              "> To report a novel attack, use the `report_new_attack` MCP tool or file an issue at:",
+              "> Novel reports require explicit consent, redaction, and maintainer review. File an issue at:",
               "> https://github.com/alexyyyander/prompt-injection-defense/issues",
               "",
               f"Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ",
@@ -58,38 +76,38 @@ jobs:
               lines += [
                   "_No community-reported attacks have been approved yet._",
                   "",
-                  "Be the first to contribute — load the skill, watch for novel patterns,",
-                  "and use `report_new_attack` to submit.",
+                  "No approved patterns are currently published.",
               ]
           else:
               for i, a in enumerate(attacks, start=13):
-                  cat = a.get("attack_category") or f"ATTACK-{i:02d}"
+                  cat = safe_field(a.get("attack_category") or f"ATTACK-{i:02d}")
                   lines += [
-                      f"## {cat} · {a['summary']}",
+                      f"## {cat} · {safe_field(a.get('summary'))}",
                       "",
-                      f"**Reported by:** {a.get('agent_platform', 'unspecified')} agent  ",
-                      f"**Confidence:** {a.get('confidence', 'medium')}  ",
-                      f"**Suspicion level:** {a.get('suspicion_level', 0)}/4  ",
-                      f"**Approved:** {(a.get('reviewed_at') or '')[:10]}",
+                      f"**Reported by:** {safe_field(a.get('agent_platform', 'unspecified'))} agent  ",
+                      f"**Confidence:** {safe_field(a.get('confidence', 'medium'))}  ",
+                      f"**Suspicion level:** {safe_field(a.get('suspicion_level', 0))}/4  ",
+                      f"**Approved:** {safe_field((a.get('reviewed_at') or '')[:10])}",
                       "",
-                      "**Example input (anonymized):**",
-                      f"> {a['example_input']}",
+                      "**Example input (must be independently redacted):**",
+                      f"> {safe_field(a.get('example_input'))}",
                       "",
-                      f"**Why suspicious:** {a['suspicion_reason']}",
+                      f"**Why suspicious:** {safe_field(a.get('suspicion_reason'))}",
                       "",
-                      f"**Attacker goal:** {a['attacker_goal']}",
+                      f"**Attacker goal:** {safe_field(a.get('attacker_goal'))}",
                       "",
-                      f"**Suggested defense:** {a['suggested_defense']}",
+                      f"**Suggested defense:** {safe_field(a.get('suggested_defense'))}",
                       "",
                   ]
                   if a.get("reviewer_notes"):
-                      lines += [f"**Maintainer notes:** {a['reviewer_notes']}", ""]
+                      lines += [f"**Maintainer notes:** {safe_field(a['reviewer_notes'])}", ""]
                   if a.get("heuristic_flags"):
-                      lines += [f"**Heuristic flags:** {', '.join(a['heuristic_flags'])}", ""]
+                      flags = ", ".join(safe_field(flag) for flag in a['heuristic_flags'])
+                      lines += [f"**Heuristic flags:** {flags}", ""]
                   lines.append("---")
                   lines.append("")
 
-          with open("skill/community-attacks.md", "w") as f:
+          with open("skill/community-attacks.md", "w", encoding="utf-8") as f:
               f.write("\n".join(lines))
 
           print(f"Generated skill/community-attacks.md with {len(attacks)} entries")

@@ -9,7 +9,10 @@ Usage:
 
 import sys
 import json
-from lib.defense_core import validate_output, OutputValidator, SecurityError
+try:
+    from lib.defense_core import OutputValidator
+except ModuleNotFoundError:  # Support the documented `python3 lib/...` form.
+    from defense_core import OutputValidator
 
 
 def main():
