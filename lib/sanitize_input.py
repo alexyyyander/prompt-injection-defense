@@ -9,31 +9,35 @@ Usage:
 
 import sys
 import json
-from lib.defense_core import sanitize, detect, PromptInjectionDetector, SecurityError
+try:
+    from lib.defense_core import PromptInjectionDetector
+except ModuleNotFoundError:  # Support the documented `python3 lib/...` form.
+    from defense_core import PromptInjectionDetector
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 sanitize_input.py <input>")
-        print("   or: echo <input> | python3 sanitize_input.py -")
+    redact_only = "--redact" in sys.argv[1:]
+    args = [arg for arg in sys.argv[1:] if arg != "--redact"]
+
+    if len(args) < 1:
+        print("Usage: python3 sanitize_input.py [--redact] <input>")
+        print("   or: echo <input> | python3 sanitize_input.py [--redact] -")
         sys.exit(1)
     
     # Read input
-    if sys.argv[1] == '-':
+    if args[0] == '-':
         text = sys.stdin.read().strip()
     else:
-        text = sys.argv[1]
+        text = args[0]
     
     if not text:
         print("Error: No input provided")
         sys.exit(1)
     
-    # First analyze for threats
-    detector = PromptInjectionDetector()
-    is_safe, threats = detect(text)
-    
-    if is_safe:
-        # No threats found, return original
+    detector = PromptInjectionDetector(strict_mode=True)
+    result = detector.analyze(text)
+
+    if result.is_safe:
         print(json.dumps({
             "status": "safe",
             "input": text,
@@ -41,24 +45,26 @@ def main():
             "threats": []
         }))
         sys.exit(0)
-    
-    try:
-        sanitized = sanitize(text)
+
+    if redact_only:
+        sanitized = detector.sanitize(text, block=False)
         print(json.dumps({
-            "status": "sanitized",
+            "status": "redacted",
             "input": text,
             "sanitized": sanitized,
-            "threats": threats
-        }))
-    except SecurityError as e:
-        print(json.dumps({
-            "status": "blocked",
-            "input": text,
-            "sanitized": None,
-            "threats": threats,
-            "error": str(e)
+            "threats": result.threats,
+            "warning": "Redaction is for display only; do not execute the result."
         }))
         sys.exit(1)
+
+    print(json.dumps({
+        "status": "blocked",
+        "input": text,
+        "sanitized": None,
+        "threats": result.threats,
+        "error": "Potential threat detected; use --redact only for non-executable display output."
+    }))
+    sys.exit(1)
 
 
 if __name__ == "__main__":

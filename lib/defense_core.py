@@ -1,21 +1,24 @@
-"""
-Prompt Injection Defense Module
+"""Small, dependency-free prompt-injection screening helpers.
 
-Core detection and sanitization functions for protecting LLM applications
-against prompt injection attacks.
-
-Based on OWASP guidelines and current research (2026).
+This module is a heuristic pre-screen, not a complete security boundary.  Real
+defence still requires instruction/data separation, least-privilege tools,
+explicit approval for side effects, and platform-level policy enforcement.
 """
 
+import base64
+import binascii
 import re
-from typing import Tuple, List, Optional
-from dataclasses import dataclass
+import unicodedata
 from collections import OrderedDict
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+from urllib.parse import unquote
 
 
 @dataclass
 class SecurityResult:
-    """Result of security analysis."""
+    """Result of heuristic security analysis."""
+
     is_safe: bool
     threats: List[str]
     sanitized_text: Optional[str] = None
@@ -23,309 +26,280 @@ class SecurityResult:
 
 
 class PromptInjectionDetector:
-    """
-    Detects potential prompt injection patterns in text.
-    
-    Based on OWASP LLM Prompt Injection Prevention Cheat Sheet.
-    """
-    
-    # Patterns that indicate potential injection attempts
+    """Detect common prompt-injection signals without treating all Unicode as bad."""
+
+    MAX_INPUT_LENGTH = 200_000
+
     INSTRUCTION_OVERRIDE_PATTERNS = [
-        # Direct override attempts
-        r'\bignore\s+(all\s+)?(previous|prior|your|the)\s+(instructions?|rules?|prompts?|context)\b',
-        r'\bdisregard\b.*\b(instructions?|rules?|prompts?|your|system)\b',
-        r'\bforget\s+(everything|all|your)\s+(you\s+)?(know|learned|were\s+told)\b',
-        r'\bnew\s+instructions?\b',
-        r'\boverride\s+(your|the)\s+(system|instructions?|rules?)\b',
-        r'\b bypass\s+(safety|security|guidelines?|rules?)\b',
-        r'\bdisable\s+(safety|security|filters?|restrictions?)\b',
-        
-        # Role playing jailbreaks
-        r'\b(you\s+are\s+now|act\s+as|pretend)\b',
-        r'\b(dan|developer| jailbreak|unrestricted)\b',
-        r'\bwithout\s+(restrictions?|guidelines?|limits?)\b',
-        r'\bno\s+(restrictions?|guidelines?|limits?)\b',
-        r'\bsystem\s*prompt\s*:',
-        r'\b<\|system\|>',
-        r'\[SYSTEM\]',
-        r'\b__system__',
-        
-        # Command injection
-        r'\b(exec|eval|executes?|run\s+(this\s+)?(code|command|shell|bash))\b',
-        r'```(bash|shell|python|javascript)',
-        r'&&\s*\w+',
-        r'\|\s*\w+',
-        r';\s*\w+',
-        
-        # Prompt leakage attempts
-        r'\b(show|reveal|tell)\b.*\b(your\s+)?(system\s+)?(prompt|instructions?|rules?)\b',
-        r'\bwhat\s+is\b.*\b(your\s+)?(system\s+)?(prompt|instructions?)\b',
-        r'\bhow\s+do\s+you\s+(bypass|disable|ignore)\b',
-        r'\bwhat\s+(are|were)\s+your\s+(original|initial|system)\s+instructions\b',
+        r"\bignore\s+(?:all\s+)?(?:previous|prior|your|the)\s+(?:instructions?|rules?|prompts?|context)\b",
+        r"\bdisregard\b[^\n]{0,200}\b(?:instructions?|rules?|prompts?|system)\b",
+        r"\bforget\s+(?:everything|all|your)\s+(?:you\s+)?(?:know|learned|were\s+told)\b",
+        r"\bnew\s+instructions?\b",
+        r"\boverride\s+(?:your|the)\s+(?:system|instructions?|rules?)\b",
+        r"\bbypass\s+(?:safety|security|guidelines?|rules?)\b",
+        r"\bdisable\s+(?:safety|security|filters?|restrictions?)\b",
+        r"\b(?:you\s+are\s+now|act\s+as|pretend\s+(?:to\s+be|you\s+are))\b",
+        r"\b(?:DAN|jailbreak|developer\s+mode|god\s+mode|unrestricted\s+mode)\b",
+        r"\bwithout\s+(?:restrictions?|guidelines?|limits?)\b",
+        r"\bno\s+(?:restrictions?|guidelines?|limits?)\b",
+        r"\bsystem\s*prompt\s*:",
+        r"<\|system\|>|\[SYSTEM\]|\b__system__\b",
+        r"\b(?:run|execute|exec)\s+(?:this\s+)?(?:code|command|shell|bash)\b",
+        r"\beval\s*\(",
+        r"```(?:bash|shell|powershell|python|javascript)\b[^\n]*(?:rm\s+-rf|curl\s|wget\s|sudo\s|python\s|bash\s)",
+        r"(?:&&|\|\||;)\s*(?:rm|curl|wget|sudo|chmod|python|bash|sh)\b",
+        r"\b(?:show|reveal|tell)\b[^\n]{0,200}\b(?:your\s+)?(?:system\s+)?(?:prompt|instructions?|rules?)\b",
+        r"\bwhat\s+is\b[^\n]{0,200}\b(?:your\s+)?(?:system\s+)?(?:prompt|instructions?)\b",
+        r"\bhow\s+do\s+you\s+(?:bypass|disable|ignore)\b",
+        r"\bwhat\s+(?:are|were)\s+your\s+(?:original|initial|system)\s+instructions\b",
+        r"</user_input>|\[/INST\]|<\|im_end\|>|<\|endoftext\|>",
     ]
-    
-    # Context manipulation patterns
+
     CONTEXT_MANIPULATION_PATTERNS = [
-        r'\bfor\s+the\s+purpose\s+of\s+analysis\b',
-        r'\bthis\s+is\s+a\s+(hypothetical|fictional|test|simulation)\b',
-        r'\blet\'s\s+play\s+a\s+game\b',
-        r'\bimagine\s+(that|you\s+are)\b',
-        r'\bwhat\s+if\s+I\s+told\s+you\b',
-        r'\bsql\s*injection\b.*\bexample\b',
-        r'\bxss\b.*\bexample\b',
+        r"\bfor\s+the\s+purpose\s+of\s+analysis\b",
+        r"\bthis\s+is\s+a\s+(?:hypothetical|fictional|test|simulation)\b",
+        r"\blet's\s+play\s+a\s+game\b",
+        r"\bimagine\s+(?:that|you\s+are)\b",
+        r"\bwhat\s+if\s+I\s+told\s+you\b",
+        r"\bsql\s*injection\b[^\n]{0,100}\bexample\b",
+        r"\bxss\b[^\n]{0,100}\bexample\b",
     ]
-    
-    # Encoding/evasion patterns
-    ENCODING_PATTERNS = [
-        r'\\x[0-9a-fA-F]{2}',
-        r'\\u[0-9a-fA-F]{4}',
-        r'%[0-9a-fA-F]{2}',
-        r'\b(base64|rot13|hex|encode)\b',
-        r'[^\x00-\x7F]',  # Non-ASCII characters
-    ]
-    
+
+    _ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff]")
+    _BIDI_RE = re.compile(r"[\u202a-\u202e\u2066-\u2069]")
+    _BASE64_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/])")
+    _ESCAPED_BYTE_RE = re.compile(r"(?:\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4})")
+
+    # A deliberately small set of common Latin-looking confusables.  This is
+    # used only for matching, never for returning user content.
+    _CONFUSABLES = str.maketrans({
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x",
+        "і": "i", "ј": "j", "Α": "A", "Β": "B", "Ε": "E", "Ι": "I",
+        "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T",
+        "Χ": "X", "Υ": "Y", "Ζ": "Z",
+    })
+
     def __init__(self, strict_mode: bool = False):
-        """
-        Initialize the detector.
-        
-        Args:
-            strict_mode: If True, be more aggressive in detecting potential threats
-        """
         self.strict_mode = strict_mode
-        # Cache repeated analyses (common in batched tool pipelines/tests).
-        # Key: input text; Value: (is_safe, threats tuple, confidence)
         self._analysis_cache = OrderedDict()
         self._analysis_cache_size = 256
-        self._compile_patterns()
-    
-    def _compile_patterns(self):
-        """Pre-compile all regex patterns for performance."""
         self._instruction_patterns = [
-            re.compile(p, re.IGNORECASE) for p in self.INSTRUCTION_OVERRIDE_PATTERNS
+            re.compile(pattern, re.IGNORECASE | re.DOTALL)
+            for pattern in self.INSTRUCTION_OVERRIDE_PATTERNS
         ]
         self._context_patterns = [
-            re.compile(p, re.IGNORECASE) for p in self.CONTEXT_MANIPULATION_PATTERNS
+            re.compile(pattern, re.IGNORECASE | re.DOTALL)
+            for pattern in self.CONTEXT_MANIPULATION_PATTERNS
         ]
-        self._encoding_patterns = [
-            re.compile(p, re.IGNORECASE) for p in self.ENCODING_PATTERNS
-        ]
-        # Fast-path compiled unions for analyze(). Keeps behavior equivalent
-        # while reducing per-call regex iterations in hot paths.
         self._instruction_any_pattern = re.compile(
-            "|".join(f"(?:{p})" for p in self.INSTRUCTION_OVERRIDE_PATTERNS),
-            re.IGNORECASE,
+            "|".join(f"(?:{pattern})" for pattern in self.INSTRUCTION_OVERRIDE_PATTERNS),
+            re.IGNORECASE | re.DOTALL,
         )
         self._context_any_pattern = re.compile(
-            "|".join(f"(?:{p})" for p in self.CONTEXT_MANIPULATION_PATTERNS),
-            re.IGNORECASE,
+            "|".join(f"(?:{pattern})" for pattern in self.CONTEXT_MANIPULATION_PATTERNS),
+            re.IGNORECASE | re.DOTALL,
         )
-        self._encoding_any_pattern = re.compile(
-            "|".join(f"(?:{p})" for p in self.ENCODING_PATTERNS),
-            re.IGNORECASE,
-        )
-    
+
+    @classmethod
+    def _normalize_for_detection(cls, text: str) -> str:
+        """Normalize common evasion characters for matching only."""
+        normalized = unicodedata.normalize("NFKC", text)
+        normalized = cls._ZERO_WIDTH_RE.sub("", normalized)
+        normalized = cls._BIDI_RE.sub("", normalized)
+        return normalized.translate(cls._CONFUSABLES)
+
+    @staticmethod
+    def _is_printable_text(value: bytes) -> bool:
+        if not value:
+            return False
+        try:
+            decoded = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        printable = sum(char.isprintable() or char.isspace() for char in decoded)
+        return printable / max(len(decoded), 1) >= 0.85
+
+    def _decoded_candidates(self, text: str) -> List[str]:
+        """Return bounded decoded candidates without treating encoding alone as malicious."""
+        candidates = []
+
+        percent_decoded = unquote(text)
+        if percent_decoded != text:
+            candidates.append(percent_decoded)
+
+        for token in self._BASE64_TOKEN_RE.findall(text):
+            try:
+                decoded = base64.b64decode(token, validate=True)
+            except (binascii.Error, ValueError):
+                continue
+            if self._is_printable_text(decoded):
+                candidates.append(decoded.decode("utf-8"))
+
+        # Do not decode arbitrary escape sequences.  Only surface them as
+        # suspicious when their decoded form contains an instruction signal.
+        if self._ESCAPED_BYTE_RE.search(text):
+            try:
+                escaped = bytes(text, "utf-8").decode("unicode_escape")
+                candidates.append(escaped)
+            except UnicodeDecodeError:
+                pass
+
+        return candidates
+
     def analyze(self, text: str) -> SecurityResult:
-        """
-        Analyze text for potential prompt injection.
-        
-        Args:
-            text: The text to analyze
-            
-        Returns:
-            SecurityResult with analysis findings
-        """
+        """Analyze text for common prompt-injection signals."""
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+        if len(text) > self.MAX_INPUT_LENGTH:
+            return SecurityResult(
+                is_safe=False,
+                threats=["Input exceeds analysis limit"],
+                confidence=0.99,
+            )
+
         cached = self._analysis_cache.get(text)
         if cached is not None:
             self._analysis_cache.move_to_end(text)
             is_safe, threats_tuple, confidence = cached
-            return SecurityResult(
-                is_safe=is_safe,
-                threats=list(threats_tuple),
-                confidence=confidence,
-            )
+            return SecurityResult(is_safe, list(threats_tuple), confidence=confidence)
 
+        normalized = self._normalize_for_detection(text)
         threats = []
+        direct_instruction = bool(self._instruction_any_pattern.search(normalized))
+        direct_context = bool(self._context_any_pattern.search(normalized))
 
-        # Single-search checks avoid repeated pattern iteration per request.
-        if self._instruction_any_pattern.search(text):
+        if direct_instruction:
             threats.append("Instruction override pattern detected")
-
-        if self._context_any_pattern.search(text):
+        if direct_context:
             threats.append("Context manipulation pattern detected")
 
-        if self.strict_mode and self._encoding_any_pattern.search(text):
-            threats.append("Potential encoding/evasion detected")
-        
-        is_safe = len(threats) == 0
-        confidence = 0.95 if is_safe else 0.85
+        obfuscated_instruction = False
+        for candidate in self._decoded_candidates(text):
+            candidate = self._normalize_for_detection(candidate)
+            if self._instruction_any_pattern.search(candidate) or self._context_any_pattern.search(candidate):
+                obfuscated_instruction = True
+                break
 
-        self._analysis_cache[text] = (is_safe, tuple(threats), confidence)
+        if obfuscated_instruction:
+            threats.append("Obfuscated instruction pattern detected")
+        elif self.strict_mode and (self._ZERO_WIDTH_RE.search(text) or self._BIDI_RE.search(text)):
+            threats.append("Potential invisible-character evasion detected")
+
+        is_safe = not threats
+        confidence = 0.95 if is_safe else 0.85
+        result = (is_safe, tuple(threats), confidence)
+        self._analysis_cache[text] = result
         self._analysis_cache.move_to_end(text)
         if len(self._analysis_cache) > self._analysis_cache_size:
             self._analysis_cache.popitem(last=False)
 
-        return SecurityResult(
-            is_safe=is_safe,
-            threats=threats,
-            confidence=confidence
-        )
-    
-    def sanitize(self, text: str, replacement: str = "[FILTERED]") -> str:
+        return SecurityResult(is_safe, threats, confidence=confidence)
+
+    def redact(self, text: str, replacement: str = "[FILTERED]") -> str:
+        """Redact known direct patterns for display or logging.
+
+        Redaction is not a security boundary.  Callers should block input when
+        ``analyze`` reports an obfuscated or otherwise unknown threat.
         """
-        Sanitize text by removing or replacing potentially dangerous patterns.
-        
-        Args:
-            text: The text to sanitize
-            replacement: What to replace dangerous patterns with
-            
-        Returns:
-            Sanitized text
-        """
-        sanitized = text
-        
-        # Remove instruction patterns
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+        normalized = self._normalize_for_detection(text)
+        if any(
+            "Obfuscated instruction pattern detected" in threat
+            for threat in self.analyze(text).threats
+        ):
+            return replacement
         for pattern in self._instruction_patterns:
-            sanitized = pattern.sub(replacement, sanitized)
-        
-        # Remove context manipulation
+            normalized = pattern.sub(replacement, normalized)
         for pattern in self._context_patterns:
-            sanitized = pattern.sub(replacement, sanitized)
-        
-        return sanitized
+            normalized = pattern.sub(replacement, normalized)
+        return normalized
+
+    def sanitize(self, text: str, replacement: str = "[FILTERED]", *, block: bool = True) -> str:
+        """Fail closed by default; optionally redact for non-execution display.
+
+        ``block=True`` preserves the safe default: suspicious input raises
+        ``SecurityError``.  ``block=False`` returns a redacted display string
+        and must not be used as proof that content is safe to execute.
+        """
+        result = self.analyze(text)
+        if result.is_safe:
+            return text
+        if block:
+            raise SecurityError(f"Potential threat detected: {', '.join(result.threats)}")
+        return self.redact(text, replacement)
 
 
 class OutputValidator:
-    """
-    Validates LLM outputs for security issues.
-    
-    Checks for:
-    - Prompt leakage (system prompts in output)
-    - Unauthorized command execution
-    - Sensitive data exposure
-    """
-    
+    """Heuristic output checks for prompt leakage and likely sensitive data."""
+
     PROMPT_LEAKAGE_PATTERNS = [
-        r'(system\s+prompt\s*[:=])',
-        r'(<\|system\|>)',
-        r'(\[SYSTEM\])',
-        r'(__system__)',
-        r'(instructions?\s*:\s*)',
-        r'(you\s+are\s+a\s+\w+\s+assistant)',
+        r"\bsystem\s+prompt\s*[:=]",
+        r"<\|system\|>|\[SYSTEM\]|\b__system__\b",
     ]
-    
+
     SENSITIVE_DATA_PATTERNS = [
-        r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',  # Email
-        r'\b\d{3}-\d{2}-\d{4}\b',  # SSN
-        r'\b\d{16}\b',  # Credit card
-        r'(api[_-]?key|secret|token)\s*[:=]\s*[\w-]+',
-        r'password\s*[:=]\s*\S+',
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+        r"\b\d{3}-\d{2}-\d{4}\b",
+        r"\b(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?[\w./+=-]+",
     ]
-    
+    _CARD_NUMBER_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+
     def __init__(self):
-        self._compile_patterns()
-    
-    def _compile_patterns(self):
         self._leakage_patterns = [
-            re.compile(p, re.IGNORECASE) for p in self.PROMPT_LEAKAGE_PATTERNS
+            re.compile(pattern, re.IGNORECASE) for pattern in self.PROMPT_LEAKAGE_PATTERNS
         ]
         self._sensitive_patterns = [
-            re.compile(p, re.IGNORECASE) for p in self.SENSITIVE_DATA_PATTERNS
+            re.compile(pattern, re.IGNORECASE) for pattern in self.SENSITIVE_DATA_PATTERNS
         ]
-    
+
     def validate(self, output: str) -> SecurityResult:
-        """
-        Validate LLM output for security issues.
-        
-        Args:
-            output: The LLM output to validate
-            
-        Returns:
-            SecurityResult with findings
-        """
+        if not isinstance(output, str):
+            raise TypeError("output must be a string")
         threats = []
-        
-        # Check for prompt leakage
-        for pattern in self._leakage_patterns:
-            if pattern.search(output):
-                threats.append("Potential prompt leakage detected")
-                break
-        
-        # Check for sensitive data exposure.
-        for pattern in self._sensitive_patterns:
-            if pattern.search(output):
-                threats.append("Sensitive data pattern detected")
-                break
-        
-        is_safe = len(threats) == 0
-        
-        return SecurityResult(
-            is_safe=is_safe,
-            threats=threats,
-            confidence=0.90
-        )
+        if any(pattern.search(output) for pattern in self._leakage_patterns):
+            threats.append("Potential prompt leakage detected")
+        if any(pattern.search(output) for pattern in self._sensitive_patterns):
+            threats.append("Potential sensitive data pattern detected")
+        if any(self._passes_luhn(candidate) for candidate in self._CARD_NUMBER_RE.findall(output)):
+            threats.append("Potential payment-card number detected")
+        return SecurityResult(not threats, threats, confidence=0.90)
+
+    @staticmethod
+    def _passes_luhn(candidate: str) -> bool:
+        digits = [int(char) for char in candidate if char.isdigit()]
+        if not 13 <= len(digits) <= 19:
+            return False
+        checksum = 0
+        parity = len(digits) % 2
+        for index, digit in enumerate(digits):
+            value = digit
+            if index % 2 == parity:
+                value *= 2
+                if value > 9:
+                    value -= 9
+            checksum += value
+        return checksum % 10 == 0
 
 
-# Convenience functions
-
-def sanitize(input_text: str) -> str:
-    """
-    Convenience function to sanitize input.
-    
-    Args:
-        input_text: User input to sanitize
-        
-    Returns:
-        Sanitized text
-        
-    Raises:
-        SecurityError: If input contains known threats
-    """
-    detector = PromptInjectionDetector()
-    result = detector.analyze(input_text)
-    
-    if not result.is_safe:
-        raise SecurityError(f"Potential threat detected: {', '.join(result.threats)}")
-    
-    return detector.sanitize(input_text)
+def sanitize(input_text: str, replacement: str = "[FILTERED]", *, block: bool = True) -> str:
+    """Fail-closed convenience wrapper; use ``block=False`` only for display redaction."""
+    return PromptInjectionDetector().sanitize(input_text, replacement, block=block)
 
 
 def validate_output(output_text: str) -> str:
-    """
-    Convenience function to validate LLM output.
-    
-    Args:
-        output_text: LLM output to validate
-        
-    Returns:
-        Original output if safe
-        
-    Raises:
-        SecurityError: If output contains security issues
-    """
-    validator = OutputValidator()
-    result = validator.validate(output_text)
-    
+    """Return output when it passes heuristics, otherwise raise ``SecurityError``."""
+    result = OutputValidator().validate(output_text)
     if not result.is_safe:
         raise SecurityError(f"Security issue in output: {', '.join(result.threats)}")
-    
     return output_text
 
 
 def detect(text: str) -> Tuple[bool, List[str]]:
-    """
-    Convenience function to detect threats.
-    
-    Args:
-        text: Text to analyze
-        
-    Returns:
-        Tuple of (is_safe, list of threats)
-    """
-    detector = PromptInjectionDetector()
-    result = detector.analyze(text)
+    """Return ``(is_safe, threats)`` for a single input."""
+    result = PromptInjectionDetector().analyze(text)
     return result.is_safe, result.threats
 
 
 class SecurityError(Exception):
-    """Exception raised when a security threat is detected."""
-    pass
+    """Raised when a fail-closed security helper rejects content."""

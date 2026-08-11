@@ -9,7 +9,10 @@ Usage:
 
 import sys
 import json
-from lib.defense_core import detect, PromptInjectionDetector
+try:
+    from lib.defense_core import PromptInjectionDetector
+except ModuleNotFoundError:  # Support the documented `python3 lib/...` form.
+    from defense_core import PromptInjectionDetector
 
 
 def main():

@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [master, main]
@@ -14,15 +17,25 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install pytest
+        run: python -m pip install -r requirements.txt
+
+      - name: Check tracked generated files
+        run: |
+          if git ls-files | grep -E '(^|/)(__pycache__/|.*\.pyc$)'; then
+            echo "Generated Python bytecode must not be tracked"
+            exit 1
+          fi
+
+      - name: Compile Python sources
+        run: python -m compileall -q lib tests
 
       - name: Run tests
         run: pytest tests/ -v
@@ -30,7 +43,7 @@ jobs:
   skill-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Verify SKILL.md exists and has required frontmatter
         run: |
@@ -59,3 +72,6 @@ jobs:
             fi
           done
           echo "All sections present"
+
+      - name: Verify mirrored skill files stay identical
+        run: cmp --silent skill/SKILL.md .claude/skills/prompt-injection-defense/SKILL.md

@@ -29,7 +29,15 @@ CREATE TABLE IF NOT EXISTS attack_reports (
                                CHECK (status IN ('pending', 'approved', 'rejected')),
   attack_category  TEXT,         -- e.g. ATTACK-13, assigned on approval
   reviewer_notes   TEXT,
-  reviewed_at      TIMESTAMPTZ
+  reviewed_at      TIMESTAMPTZ,
+
+  -- Bound public input before it reaches moderation or generated Markdown.
+  CONSTRAINT attack_reports_summary_length CHECK (char_length(summary) BETWEEN 1 AND 500),
+  CONSTRAINT attack_reports_example_length CHECK (char_length(example_input) BETWEEN 1 AND 2000),
+  CONSTRAINT attack_reports_reason_length CHECK (char_length(suspicion_reason) BETWEEN 1 AND 2000),
+  CONSTRAINT attack_reports_goal_length CHECK (char_length(attacker_goal) BETWEEN 1 AND 1000),
+  CONSTRAINT attack_reports_defense_length CHECK (char_length(suggested_defense) BETWEEN 1 AND 2000),
+  CONSTRAINT attack_reports_notes_length CHECK (reviewer_notes IS NULL OR char_length(reviewer_notes) <= 2000)
 );
 
 -- ─────────────────────────────────────────────
