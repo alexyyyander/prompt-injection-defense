@@ -35,7 +35,7 @@ jobs:
           fi
 
       - name: Compile Python sources
-        run: python -m compileall -q lib tests
+        run: python -m compileall -q lib scripts tests
 
       - name: Run tests
         run: pytest tests/ -v
@@ -56,8 +56,8 @@ jobs:
             echo "ERROR: SKILL.md missing 'name' frontmatter field"
             exit 1
           fi
-          if ! grep -q "^version:" "$FILE"; then
-            echo "ERROR: SKILL.md missing 'version' frontmatter field"
+          if ! grep -q "^  version:" "$FILE"; then
+            echo "ERROR: SKILL.md missing 'metadata.version' frontmatter field"
             exit 1
           fi
           echo "SKILL.md OK"

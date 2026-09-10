@@ -23,7 +23,7 @@ def main():
     
     # Read input
     if sys.argv[1] == '-':
-        text = sys.stdin.read().strip()
+        text = sys.stdin.read(OutputValidator.MAX_OUTPUT_LENGTH + 1)
     else:
         text = sys.argv[1]
     

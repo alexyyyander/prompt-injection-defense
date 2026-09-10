@@ -1,126 +1,71 @@
 name: Sync Approved Attacks
 
-# Runs daily + on manual trigger.
-# Fetches approved rows from Supabase and regenerates skill/community-attacks.md.
-# Required GitHub Secrets:
-#   SUPABASE_URL         e.g. https://xyzxyz.supabase.co
-#   SUPABASE_SERVICE_KEY  service role key (full read access, bypasses RLS)
-
+# SUPABASE_URL and SUPABASE_READ_KEY (publishable/anon key recommended).
+# SUPABASE_SERVICE_KEY remains supported as a fallback for existing installations.
 on:
   schedule:
-    - cron: "0 6 * * *"   # 06:00 UTC daily
-  workflow_dispatch:        # manual trigger from GitHub UI
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      check_only:
+        description: Validate the live feed without publishing changes
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-feed-sync
+  cancel-in-progress: false
 
 jobs:
-  sync:
+  check:
+    if: github.event_name == 'workflow_dispatch' && inputs.check_only
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Fetch approved attacks from Supabase
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Validate live feed without publishing
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_READ_KEY: ${{ secrets.SUPABASE_READ_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 scripts/sync_community_attacks.py --check
+
+  publish:
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && !inputs.check_only &&
+       github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Fetch and validate complete approved feed
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_READ_KEY: ${{ secrets.SUPABASE_READ_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 scripts/sync_community_attacks.py
+      - name: Commit and push if content changed
         run: |
-          curl -sf \
-            "${SUPABASE_URL}/rest/v1/attack_reports?status=eq.approved&order=reviewed_at.asc" \
-            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            -o approved_attacks.json
-          echo "Fetched $(jq length approved_attacks.json) approved attacks"
-
-      - name: Generate skill/community-attacks.md
-        run: |
-          python3 - <<'EOF'
-          import datetime
-          import html
-          import json
-
-          MAX_FIELD_LENGTH = 2000
-
-          def safe_field(value):
-              """Keep community data inert when rendered into Markdown."""
-              text = "" if value is None else str(value)
-              text = text.replace("\x00", " ").replace("\r", " ").replace("\n", " ")
-              text = html.escape(text[:MAX_FIELD_LENGTH], quote=False)
-              return (text.replace("`", "\\`")
-                          .replace("[", "\\[")
-                          .replace("]", "\\]")
-                          .replace("(", "\\(")
-                          .replace(")", "\\)"))
-
-          with open("approved_attacks.json", encoding="utf-8") as f:
-              attacks = json.load(f)
-
-          if not isinstance(attacks, list):
-              raise SystemExit("approved_attacks.json must contain a JSON array")
-
-          lines = [
-              "# Community-Reported Attack Patterns",
-              "",
-              "> This file is auto-generated daily from the crowd-sourced Supabase database.",
-              "> Novel reports require explicit consent, redaction, and maintainer review. File an issue at:",
-              "> https://github.com/alexyyyander/prompt-injection-defense/issues",
-              "",
-              f"Last updated: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ",
-              f"Total approved patterns: {len(attacks)}",
-              "",
-              "---",
-              "",
-          ]
-
-          if not attacks:
-              lines += [
-                  "_No community-reported attacks have been approved yet._",
-                  "",
-                  "No approved patterns are currently published.",
-              ]
-          else:
-              for i, a in enumerate(attacks, start=13):
-                  cat = safe_field(a.get("attack_category") or f"ATTACK-{i:02d}")
-                  lines += [
-                      f"## {cat} · {safe_field(a.get('summary'))}",
-                      "",
-                      f"**Reported by:** {safe_field(a.get('agent_platform', 'unspecified'))} agent  ",
-                      f"**Confidence:** {safe_field(a.get('confidence', 'medium'))}  ",
-                      f"**Suspicion level:** {safe_field(a.get('suspicion_level', 0))}/4  ",
-                      f"**Approved:** {safe_field((a.get('reviewed_at') or '')[:10])}",
-                      "",
-                      "**Example input (must be independently redacted):**",
-                      f"> {safe_field(a.get('example_input'))}",
-                      "",
-                      f"**Why suspicious:** {safe_field(a.get('suspicion_reason'))}",
-                      "",
-                      f"**Attacker goal:** {safe_field(a.get('attacker_goal'))}",
-                      "",
-                      f"**Suggested defense:** {safe_field(a.get('suggested_defense'))}",
-                      "",
-                  ]
-                  if a.get("reviewer_notes"):
-                      lines += [f"**Maintainer notes:** {safe_field(a['reviewer_notes'])}", ""]
-                  if a.get("heuristic_flags"):
-                      flags = ", ".join(safe_field(flag) for flag in a['heuristic_flags'])
-                      lines += [f"**Heuristic flags:** {flags}", ""]
-                  lines.append("---")
-                  lines.append("")
-
-          with open("skill/community-attacks.md", "w", encoding="utf-8") as f:
-              f.write("\n".join(lines))
-
-          print(f"Generated skill/community-attacks.md with {len(attacks)} entries")
-          EOF
-
-      - name: Commit and push if changed
-        run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add skill/community-attacks.md
           if git diff --staged --quiet; then
-            echo "No changes to skill/community-attacks.md"
+            echo "No approved report content changed."
           else
             git commit -m "chore: sync approved community attacks [skip ci]"
-            git push
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
