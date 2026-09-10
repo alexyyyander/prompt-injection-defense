@@ -140,9 +140,12 @@ prompt-injection-defense/
 │   └── validate_output.py         ← CLI: validate LLM output
 ├── supabase/
 │   └── schema.sql                 ← DB schema for crowd-reported attacks
+├── scripts/
+│   └── sync_community_attacks.py   ← Bounded, validated, atomic feed sync
 ├── tests/
 │   ├── test_defense.py            ← Core tests
-│   └── test_regressions.py        ← Encoding, false-positive, resource-limit, CLI regressions
+│   ├── test_regressions.py        ← Encoding, false-positive, resource-limit, CLI regressions
+│   └── test_community_sync.py     ← Offline feed, pagination, transport and publication tests
 ├── .claude/skills/prompt-injection-defense/
 │   └── SKILL.md                   ← Claude Code auto-discovery (mirrors skill/)
 ├── .github/workflows/
@@ -235,14 +238,58 @@ guarantee:
 
 ## Community Feed Maintenance
 
-The scheduled workflow requires `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` repository
-secrets. The fetch has bounded retries and timeouts; a failed fetch does not replace
-the published feed. A curl exit code of 6 means the hostname could not be resolved:
-check the configured URL and the Supabase project's availability. Restoring that
-external service/configuration is separate from changing this repository.
+The scheduled workflow uses `SUPABASE_URL` and an API key from repository secrets.
+Prefer `SUPABASE_READ_KEY` with a publishable/anon key when the approved-report read
+policy in `supabase/schema.sql` is enabled. The existing `SUPABASE_SERVICE_KEY` is
+supported as a fallback; choosing a read key avoids giving the sync unnecessary
+RLS-bypass access. The script supports both legacy JWT keys and the new `sb_*`
+key formats. Do not put credentials in command arguments or logs.
 
-The repository does not include a reporting MCP server. Community publication
-still requires moderation and redaction before approval.
+The URL must be an HTTPS project origin, without credentials, a path, a query, or a
+fragment. Surrounding whitespace and a trailing slash are normalized. HTTP redirects
+are rejected so API credentials cannot be forwarded to a different endpoint.
+
+The sync reads all pages using PostgREST's exact count and `Content-Range`, even if
+the server caps a page below the requested size. Missing ranges, changing counts,
+duplicate IDs, malformed rows, and unapproved reports stop publication. This catches
+common pagination inconsistencies but is not a database snapshot: moderation changes
+with the same total count across page requests can still affect which rows are seen.
+Use a transactional export if snapshot consistency is required.
+
+Limits: 100 reports requested per page, 5,000 reports total, 2 MB per page, 25 MB per
+download, 3 attempts per request, a 180-second request/retry budget, and a 5-minute
+workflow timeout. Limit failures preserve the existing feed. Required report text,
+review timestamps, IDs, and metadata are validated before rendering; reports still
+require human moderation and redaction before approval.
+
+Rendering uses source review timestamps and stable ordering. An unchanged feed does
+not produce a daily timestamp-only commit. A changed feed replaces the local artifact
+atomically only after fetching and validation have succeeded.
+
+After this workflow is on the default branch, run a read-only health check with:
+
+```bash
+gh workflow run update-community-attacks.yml \
+  --repo alexyyyander/prompt-injection-defense -f check_only=true
+```
+
+Manual runs default to `check_only=true`; this job has read-only repository access.
+To check a development branch, add `--ref BRANCH_NAME`. Publishing is limited to the
+scheduled run or a manual `check_only=false` run on the default branch. Concurrent
+sync runs are serialized. The local equivalent is
+`python3 scripts/sync_community_attacks.py --check` with credentials supplied through
+the environment; check mode does not modify the feed.
+
+Diagnostics distinguish DNS failure, TLS failure, authentication/permissions,
+missing project/table, paused projects, invalid responses, and exhausted budgets.
+No response body or credential is included in error messages. Old curl exit code 6
+logs indicate failed hostname resolution. Restore the Supabase project or correct
+the relevant repository secret, then rerun check mode before publishing.
+
+The repository does not include a reporting MCP server. See the official
+[PostgREST pagination reference](https://docs.postgrest.org/en/stable/references/api/pagination_count.html)
+and [Supabase API-key documentation](https://supabase.com/docs/guides/getting-started/api-keys)
+for the transport conventions used here.
 
 ---
 
