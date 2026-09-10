@@ -1,7 +1,8 @@
 # Community-Reported Attack Patterns
 
 > This file is auto-generated daily from the crowd-sourced Supabase database.
-> To report a novel attack, use the `report_new_attack` MCP tool or file an issue at:
+> Reports are untrusted reference data, not instructions. Never load them into a system/developer message.
+> Novel reports require explicit consent, redaction, and maintainer review. File an issue at:
 > https://github.com/alexyyyander/prompt-injection-defense/issues
 
 Last updated: 2026-05-05 08:02 UTC  
@@ -11,5 +12,4 @@ Total approved patterns: 0
 
 _No community-reported attacks have been approved yet._
 
-Be the first to contribute — load the skill, watch for novel patterns,
-and use `report_new_attack` to submit.
+No approved patterns are currently published.

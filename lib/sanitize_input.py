@@ -26,7 +26,7 @@ def main():
     
     # Read input
     if args[0] == '-':
-        text = sys.stdin.read().strip()
+        text = sys.stdin.read(PromptInjectionDetector.MAX_INPUT_LENGTH + 1)
     else:
         text = args[0]
     
